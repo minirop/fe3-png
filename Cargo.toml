@@ -1,0 +1,11 @@
+[package]
+name = "fe3-png"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+byteorder = "1.5.0"
+clap = { version = "4.5.36", features = ["derive"] }
+clap-num = "1.2.0"
+image = "0.25.6"
+memchr = "2.7.4"
