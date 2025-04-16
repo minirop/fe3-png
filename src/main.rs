@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use clap::Parser;
 use clap_num::maybe_hex;
@@ -39,12 +40,15 @@ struct Args {
 
     #[arg(short, long)]
     output: String,
+
+    #[arg(short, long)]
+    palette: Option<String>,
 }
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    extract_graphics(&args.filename, args.address, &args.output)?;
+    extract_graphics(&args.filename, args.address, &args.output, &args.palette)?;
 
     // not working
     // compress_graphics("output.bin", "output.comp.bin")?;
@@ -136,7 +140,28 @@ fn compress_graphics(filename: &str, output_filename: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn extract_graphics(filename: &str, start: u64, output_filename: &str) -> io::Result<()> {
+fn extract_graphics(
+    filename: &str,
+    start: u64,
+    output_filename: &str,
+    palette_file: &Option<String>,
+) -> io::Result<()> {
+    let mut palette = vec![];
+
+    if let Some(pal) = palette_file {
+        let mut pal_file = File::open(pal)?;
+        while let Ok(colour) = pal_file.read_u16::<LittleEndian>() {
+            let r = (colour & 0b11111) as u8;
+            let g = ((colour >> 5) & 0b11111) as u8;
+            let b = ((colour >> 10) & 0b11111) as u8;
+            palette.push(Rgb([r * 8, g * 8, b * 8]));
+        }
+    } else {
+        for i in 0..16 {
+            palette.push(Rgb([i * 17, i * 17, i * 17]));
+        }
+    }
+
     let mut rom = File::open(filename)?;
 
     if start > 0 {
@@ -214,22 +239,42 @@ fn extract_graphics(filename: &str, start: u64, output_filename: &str) -> io::Re
                 }
             }
             0x7 => {
-                let count = rom.read_u8()? as usize + 1;
+                let add = ((id & 0b11) as usize) << 8;
+                let count = rom.read_u8()? as usize + 1 + add;
 
-                if id == 0xE0 {
+                let real_id = id & 0b11111100;
+
+                if real_id == 0xE0 {
                     let mut buffer = vec![0u8; count];
                     rom.read(&mut buffer)?;
                     output.extend(buffer);
-                } else if id == 0xE4 {
+                } else if real_id == 0xE4 {
                     let copied_byte = rom.read_u8()?;
                     let copied = vec![copied_byte; count];
                     output.extend(copied);
+                } else if real_id == 0xE8 {
+                    let mut double = [0u8; 2];
+                    rom.read(&mut double)?;
+                    for i in 0..count {
+                        output.push(double[i % 2]);
+                    }
+                } else if real_id == 0xF8 {
+                    let back = rom.read_u8()? as usize;
+                    println!("{} - {back}", output.len());
+                    let starting_pos = output.len() - back;
+                    for id in 0..count {
+                        output.push(output[starting_pos + id]);
+                    }
                 } else {
                     let mut output_bin = File::create("dump.bin")?;
                     output_bin.write(&output)?;
-                    println!("{id:#X}");
+                    println!("{id:#X} // {real_id:#X}");
                     unimplemented!();
                 }
+                // technically, it does "id << 3 & $e0" so "ccc0 0000"
+                // then "id & 3" => 0000 00cc
+                // id => 111a aabb
+                // check if aaa != 0
             }
             _ => {
                 println!("unhandled id: {id:#X} ({pos:#X})");
@@ -241,13 +286,14 @@ fn extract_graphics(filename: &str, start: u64, output_filename: &str) -> io::Re
     }
 
     let size = rom.seek(io::SeekFrom::Current(0))? - start;
-    println!("compressed size: {:#X}", size);
-
-    let mut palette = vec![];
-    for i in 0..16 {
-        // palette.push(Rgb([COLOURS[i].0 * 8, COLOURS[i].1 * 8, COLOURS[i].2 * 8]));
-        palette.push(Rgb([i * 17, i * 17, i * 17]));
-    }
+    println!("start: {start}");
+    println!("compressed size: {size:#X} // {size}");
+    println!(
+        "uncompressed size: {:#X}, {}, {}",
+        output.len(),
+        16 * 8,
+        (output.len() / 64)
+    );
 
     let mut output_bin = File::create(format!("{output_filename}.bin"))?;
     output_bin.write(&output)?;
