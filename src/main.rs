@@ -242,6 +242,7 @@ fn extract_graphics(
                 // id => 111a aabb
                 // aaa is the same ID as above
                 // bb is part of the count (count + 0x30)
+                // for when "count" is greater than 0x1f
                 let add = ((id & 0b11) as usize) << 8;
                 let count = rom.read_u8()? as usize + 1 + add;
 
