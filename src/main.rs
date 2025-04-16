@@ -239,6 +239,9 @@ fn extract_graphics(
                 }
             }
             0x7 => {
+                // id => 111a aabb
+                // aaa is the same ID as above
+                // bb is part of the count (count + 0x30)
                 let add = ((id & 0b11) as usize) << 8;
                 let count = rom.read_u8()? as usize + 1 + add;
 
@@ -258,9 +261,15 @@ fn extract_graphics(
                     for i in 0..count {
                         output.push(double[i % 2]);
                     }
+                } else if real_id == 0xF0 {
+                    let lo = rom.read_u8()? as usize;
+                    let hi = rom.read_u8()? as usize;
+                    let starting_copy = lo + (hi << 8);
+                    let mut copied = vec![0u8; count];
+                    copied.copy_from_slice(&output[starting_copy..(starting_copy + count)]);
+                    output.extend(copied);
                 } else if real_id == 0xF8 {
                     let back = rom.read_u8()? as usize;
-                    println!("{} - {back}", output.len());
                     let starting_pos = output.len() - back;
                     for id in 0..count {
                         output.push(output[starting_pos + id]);
@@ -271,10 +280,6 @@ fn extract_graphics(
                     println!("{id:#X} // {real_id:#X}");
                     unimplemented!();
                 }
-                // technically, it does "id << 3 & $e0" so "ccc0 0000"
-                // then "id & 3" => 0000 00cc
-                // id => 111a aabb
-                // check if aaa != 0
             }
             _ => {
                 println!("unhandled id: {id:#X} ({pos:#X})");
@@ -295,12 +300,25 @@ fn extract_graphics(
         (output.len() / 64)
     );
 
+    if start > 0 {
+        rom.seek(io::SeekFrom::Start(start))?;
+    }
+    let mut comp_buffer = vec![0u8; size as usize];
+    rom.read(&mut comp_buffer)?;
     let mut output_bin = File::create(format!("{output_filename}.bin"))?;
+    output_bin.write(&comp_buffer)?;
+
+    let mut output_bin = File::create(format!("{output_filename}.uncomp.bin"))?;
     output_bin.write(&output)?;
+
+    if output.len() % 128 != 0 {
+        println!("Not a multiple of 128, so maybe not an image.");
+        return Ok(());
+    }
 
     let mut buffer = vec![0u8; 32];
     let mut cursor = Cursor::new(&output);
-    let mut img = RgbImage::new(16 * 8, (output.len() / 64) as u32);
+    let mut img = RgbImage::new(128, (output.len() / 64) as u32);
 
     for id in 0..(output.len() / 32) {
         cursor.read(&mut buffer)?;
