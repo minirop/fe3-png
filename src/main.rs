@@ -180,114 +180,74 @@ fn extract_graphics(
 
         // aaac cccc
         // aaa = id
-        // ccccc = bytes to copy
-        match id >> 5 {
+        // ccccc = byte counts
+        // if aaa == 0b111
+        // then 111a aacc
+        // aaa = id
+        // cc = 0b00cc'0000'0000 + following byte
+
+        let cmd = id >> 5;
+        let (cmd, count) = if cmd == 7 {
+            let cmd = (id >> 2) & 0b111;
+            let count_h = ((id as usize) & 0b11) << 8;
+            let count = rom.read_u8()? as usize + 1 + count_h;
+
+            (cmd, count)
+        } else {
+            (cmd, (id & 0x1f) as usize + 1)
+        };
+
+        match cmd {
             0x0 => {
-                let count = id as usize + 1;
                 let mut buffer = vec![0u8; count];
                 rom.read(&mut buffer)?;
                 output.extend(buffer);
             }
             0x1 => {
-                let copy_count = (id & 0x1F) as usize + 1;
                 let copied_byte = rom.read_u8()?;
-                let copied = vec![copied_byte; copy_count];
+                let copied = vec![copied_byte; count];
                 output.extend(copied);
             }
             0x2 => {
-                let copy_count = (id & 0x1F) as usize + 1;
                 let mut double = [0u8; 2];
                 rom.read(&mut double)?;
-                for i in 0..copy_count {
+                for i in 0..count {
                     output.push(double[i % 2]);
                 }
             }
             0x3 => {
-                let count = (id & 0x1F) + 1;
                 let start = rom.read_u8()?;
                 for i in 0..count {
-                    output.push(start + i);
+                    output.push(start + i as u8);
                 }
             }
             0x4 => {
-                let copy_count = (id & 0x1F) as usize + 1;
                 let lo = rom.read_u8()? as usize;
                 let hi = rom.read_u8()? as usize;
                 let starting_copy = lo + (hi << 8);
-                let mut copied = vec![0u8; copy_count];
-                copied.copy_from_slice(&output[starting_copy..(starting_copy + copy_count)]);
+                let mut copied = vec![0u8; count];
+                copied.copy_from_slice(&output[starting_copy..(starting_copy + count)]);
                 output.extend(copied);
             }
             0x5 => {
-                let copy_count = (id & 0x1F) as usize + 1;
                 let lo = rom.read_u8()? as usize;
                 let hi = rom.read_u8()? as usize;
                 let starting_copy = lo + (hi << 8);
 
-                for id in starting_copy..(starting_copy + copy_count) {
+                for id in starting_copy..(starting_copy + count) {
                     let byte = output[id] ^ 0xFF;
                     output.push(byte);
                 }
             }
             0x6 => {
-                let copy_count = (id & 0x1F) as usize + 1;
                 let back = rom.read_u8()?;
                 let starting_copy = output.len() - (back as usize);
 
-                for id in starting_copy..(starting_copy + copy_count) {
+                for id in starting_copy..(starting_copy + count) {
                     output.push(output[id]);
                 }
             }
-            0x7 => {
-                // id => 111a aabb
-                // aaa is the same ID as above
-                // bb is part of the count (count + 0x30)
-                // for when "count" is greater than 0x1f
-                let add = ((id & 0b11) as usize) << 8;
-                let count = rom.read_u8()? as usize + 1 + add;
-
-                let real_id = id & 0b11111100;
-
-                if real_id == 0xE0 {
-                    let mut buffer = vec![0u8; count];
-                    rom.read(&mut buffer)?;
-                    output.extend(buffer);
-                } else if real_id == 0xE4 {
-                    let copied_byte = rom.read_u8()?;
-                    let copied = vec![copied_byte; count];
-                    output.extend(copied);
-                } else if real_id == 0xE8 {
-                    let mut double = [0u8; 2];
-                    rom.read(&mut double)?;
-                    for i in 0..count {
-                        output.push(double[i % 2]);
-                    }
-                } else if real_id == 0xF0 {
-                    let lo = rom.read_u8()? as usize;
-                    let hi = rom.read_u8()? as usize;
-                    let starting_copy = lo + (hi << 8);
-                    let mut copied = vec![0u8; count];
-                    copied.copy_from_slice(&output[starting_copy..(starting_copy + count)]);
-                    output.extend(copied);
-                } else if real_id == 0xF8 {
-                    let back = rom.read_u8()? as usize;
-                    let starting_pos = output.len() - back;
-                    for id in 0..count {
-                        output.push(output[starting_pos + id]);
-                    }
-                } else {
-                    let mut output_bin = File::create("dump.bin")?;
-                    output_bin.write(&output)?;
-                    println!("{id:#X} // {real_id:#X}");
-                    unimplemented!();
-                }
-            }
-            _ => {
-                println!("unhandled id: {id:#X} ({pos:#X})");
-                println!("{}", len);
-                println!("{:?}", &output[(len - 16)..(len - 1)]);
-                break;
-            }
+            _ => unreachable!(),
         }
     }
 
